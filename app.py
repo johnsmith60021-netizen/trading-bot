@@ -15,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # تنظیمات ایمیل - Outlook
-EMAIL = os.getenv('EMAIL', 'your-email@outlook.com')
+EMAIL = os.getenv('EMAIL', 'john.smith60021@outlook.com')
 EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 IMAP_SERVER = 'outlook.office365.com'
 IMAP_PORT = 993
@@ -73,8 +73,7 @@ def check_emails():
                     print(f"📝 موضوع: {subject}")
                     
                     # پردازش سیگنال TradingView
-                    if "tradingview" in from_email.lower():
-                        process_tradingview_alert(body, subject, from_email)
+                    process_tradingview_alert(body, subject, from_email)
         
         mail.close()
         mail.logout()
@@ -83,38 +82,57 @@ def check_emails():
         print(f"❌ خطا در بررسی ایمیل: {e}")
 
 def process_tradingview_alert(email_body, subject, from_email):
-    """پردازش آلرت TradingView"""
+    """پردازش آلرت TradingView - نسخه نهایی"""
     try:
-        # استخراج اطلاعات از ایمیل
+        # تشخیص ایمیل از TradingView (مستقیم یا فوروارد)
+        is_tradingview = "noreply@tradingview.com" in from_email.lower()
+        
+        if not is_tradingview:
+            print(f"❌ ایمیل از منبع ناشناس: {from_email}")
+            return
+        
+        print(f"✅ ایمیل تأیید شده از TradingView")
+
+        # استخراج اطلاعات از سابجکت
         action = "BUY" if "BUY" in subject.upper() else "SELL" if "SELL" in subject.upper() else "UNKNOWN"
         
         if action == "UNKNOWN":
-            return
-        
-        # استخراج symbol و amount از متن ایمیل
+            # اگر در سابجکت نبود، در بدنه ایمیل جستجو کن
+            if "BUY" in email_body.upper():
+                action = "BUY"
+            elif "SELL" in email_body.upper():
+                action = "SELL"
+            else:
+                print("❌ عمل معامله مشخص نیست")
+                return
+
+        # استخراج نماد و مقدار
         symbol = "BTC/USDT"
         amount = "100"
         
-        # جستجو در متن ایمیل برای نماد و مقدار
-        lines = email_body.split('\n')
-        for line in lines:
-            line_upper = line.upper()
-            if any(sym in line_upper for sym in ['BTC', 'ETH', 'XRP', 'USDT']):
-                parts = line.split()
-                for i, part in enumerate(parts):
-                    if part.upper() in ['BTC', 'ETH', 'XRP'] and i+1 < len(parts):
-                        if 'USDT' in parts[i+1].upper() or 'USD' in parts[i+1].upper():
-                            symbol = f"{part.upper()}/USDT"
-                    if part.isdigit() and float(part) > 0:
-                        amount = part
+        # جستجو در سابجکت و بدنه ایمیل
+        search_text = subject + " " + email_body
+        search_upper = search_text.upper()
+        
+        # تشخیص نماد
+        if "BTC" in search_upper:
+            symbol = "BTC/USDT"
+        elif "ETH" in search_upper:
+            symbol = "ETH/USDT" 
+        elif "XRP" in search_upper:
+            symbol = "XRP/USDT"
+        
+        # تشخیص مقدار
+        amount_match = re.search(r'(\d+(?:\.\d+)?)\s*(USD|USDT|BTC|ETH)', search_text)
+        if amount_match:
+            amount = amount_match.group(1)
         
         # ساخت پیام سیگنال
         signal_data = {
             "action": action,
             "symbol": symbol,
             "amount": amount,
-            "source": "email",
-            "subject": subject
+            "source": "tradingview_confirmed"
         }
         
         print(f"🎯 پردازش سیگنال: {signal_data}")
@@ -125,11 +143,9 @@ def process_tradingview_alert(email_body, subject, from_email):
 📈 عمل: {action}
 💎 نماد: {symbol}
 💰 مقدار: {amount}
-📧 موضوع: {subject}
+✅ منبع: تأیید شده
 """
         send_telegram_message(message)
-        
-        # TODO: بعداً اینجا معامله رو اجرا می‌کنیم
         
     except Exception as e:
         print(f"❌ خطا در پردازش ایمیل: {e}")
