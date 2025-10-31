@@ -1,79 +1,40 @@
-from flask import Flask, request, jsonify
-import requests
+from flask import Flask
 import os
 import imaplib
-import email
-import sys
+import logging
 
 app = Flask(__name__)
-
-# لاگ کردن به stdout
-import logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
 
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-EMAIL = os.getenv('EMAIL')
-EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
-
-logger.info("🚀 APPLICATION STARTED - LOGGING WORKS!")
-logger.info(f"📧 Email: {EMAIL}")
-logger.info(f"🔑 Pass set: {'YES' if EMAIL_PASSWORD else 'NO'}")  # ✅ اصلاح شد: EMAIL_PASSWORD
-
-def send_telegram_message(message):
+@app.route('/test-simple')
+def test_simple():
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message}
-        response = requests.post(url, json=payload)
-        return True
-    except Exception as e:
-        logger.error(f"Telegram error: {e}")
-        return False
-
-@app.route('/test-debug', methods=['GET'])
-def test_debug():
-    logger.info("🔍 DEBUG TEST STARTED")
-    
-    try:
-        # تست IMAP
-        logger.info("🔗 Connecting to IMAP...")
-        mail = imaplib.IMAP4_SSL('outlook.office365.com', 993)
-        logger.info("✅ IMAP Connected")
+        email = os.getenv('EMAIL')
+        password = os.getenv('EMAIL_PASSWORD')
+        imap_server = os.getenv('IMAP_SERVER', 'outlook.office365.com')
         
-        mail.login(EMAIL, EMAIL_PASSWORD)
-        logger.info("✅ Login successful")
+        logger.info(f"🔧 Testing with: {email}, Server: {imap_server}")
         
+        # تست اتصال
+        mail = imaplib.IMAP4_SSL(imap_server, 993)
+        mail.login(email, password)
         mail.select('inbox')
-        logger.info("✅ Inbox selected")
         
         status, messages = mail.search(None, 'UNSEEN')
         email_count = len(messages[0].split()) if status == 'OK' else 0
-        logger.info(f"📧 Unread emails: {email_count}")
         
         mail.close()
         mail.logout()
         
-        # تست Telegram
-        telegram_ok = send_telegram_message("🧪 تست دیباگ - سیستم فعال است")
-        logger.info(f"📱 Telegram test: {'OK' if telegram_ok else 'FAILED'}")
-        
-        return jsonify({
-            "status": "success",
-            "imap": "connected", 
-            "emails": email_count,
-            "telegram": "sent"
-        })
+        return f"✅ SUCCESS! Found {email_count} unread emails"
         
     except Exception as e:
-        logger.error(f"❌ TEST FAILED: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return f"❌ FAILED: {str(e)}"
 
 @app.route('/')
 def home():
-    logger.info("📍 Home page accessed")
-    return "سیستم فعال است - از /test-debug استفاده کنید"
+    return "سیستم فعال - از /test-simple استفاده کنید"
 
 if __name__ == '__main__':
-    logger.info("🎯 Starting Flask application...")
-    app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=True)
+    app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000))
