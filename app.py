@@ -43,21 +43,20 @@ def check_emails():
         mail.login(EMAIL, EMAIL_PASSWORD)
         mail.select('inbox')
         
-        # پیدا کردن ALL ایمیل‌ها (نه فقط خوانده نشده)
-        status, messages = mail.search(None, 'ALL')
+        # جستجوی ایمیل‌های خوانده نشده
+        status, messages = mail.search(None, 'UNSEEN')
         if status == 'OK':
             email_ids = messages[0].split()
-            logger.info(f"📧 تعداد کل ایمیل‌ها در صندوق: {len(email_ids)}")
+            logger.info(f"📧 تعداد ایمیل‌های خوانده نشده: {len(email_ids)}")
             
-            # بررسی ۵ ایمیل آخر
-            for email_id in email_ids[-5:]:
+            for email_id in email_ids:
                 status, msg_data = mail.fetch(email_id, '(RFC822)')
                 if status == 'OK':
                     msg = email.message_from_bytes(msg_data[0][1])
-                    subject = msg['subject']
+                    subject = msg['subject'] or "بدون موضوع"
                     from_email = msg['from']
                     
-                    logger.info(f"📩 ایمیل از: {from_email}")
+                    logger.info(f"📩 ایمیل جدید از: {from_email}")
                     logger.info(f"📝 موضوع: {subject}")
                     
                     # استخراج متن ایمیل
@@ -70,13 +69,14 @@ def check_emails():
                     else:
                         body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
                     
-                    logger.info(f"📄 محتوای ایمیل: {body[:300]}...")
-                    logger.info("─" * 50)
+                    logger.info(f"📄 محتوای ایمیل: {body[:500]}...")
                     
-                    # اگر ایمیل TradingView هست، پردازش کن
+                    # پردازش ایمیل TradingView
                     if "tradingview.com" in from_email.lower():
                         logger.info("🎯 ایمیل TradingView پیدا شد! در حال پردازش...")
                         process_tradingview_alert(body, subject, from_email)
+                    else:
+                        logger.info(f"⚠️ ایمیل از منبع دیگر: {from_email}")
         
         mail.close()
         mail.logout()
@@ -87,47 +87,43 @@ def check_emails():
 def process_tradingview_alert(email_body, subject, from_email):
     """پردازش آلرت TradingView"""
     try:
-        logger.info(f"🔍 پردازش ایمیل TradingView از: {from_email}")
+        logger.info("🎯 شروع پردازش سیگنال TradingView")
         
         # ترکیب موضوع و بدنه برای جستجو
         search_text = f"{subject} {email_body}"
         search_upper = search_text.upper()
         
-        logger.info(f"🔍 متن جستجو: {search_text[:200]}...")
+        logger.info(f"🔍 متن کامل ایمیل: {search_text}")
         
         # تشخیص عمل معامله
-        action = "BUY" if "BUY" in search_upper else "SELL" if "SELL" in search_upper else "UNKNOWN"
+        action = "UNKNOWN"
+        if "BUY" in search_upper:
+            action = "BUY"
+        elif "SELL" in search_upper:
+            action = "SELL"
+        
+        logger.info(f"🔍 عمل تشخیص داده شده: {action}")
         
         if action == "UNKNOWN":
             logger.warning("⚠️ عمل معامله تشخیص داده نشد")
-            # جستجوی بیشتر در متن
-            if "خرید" in search_text:
-                action = "BUY"
-            elif "فروش" in search_text:
-                action = "SELL"
-            else:
-                return
+            return
 
         # تشخیص نماد
         symbol = "BTC/USDT"
-        symbol_patterns = [
-            r'([A-Z]{2,10})/?([A-Z]{3,6})',
-            r'([A-Z]{2,10})(USDT|USDC|BUSD)',
-        ]
-        
-        for pattern in symbol_patterns:
-            match = re.search(pattern, search_upper)
-            if match:
-                base = match.group(1)
-                quote = match.group(2) if match.lastindex >= 2 else "USDT"
-                symbol = f"{base}/{quote}"
-                break
+        if "XRP" in search_upper:
+            symbol = "XRP/USDT"
+        elif "BTC" in search_upper:
+            symbol = "BTC/USDT"
+        elif "ETH" in search_upper:
+            symbol = "ETH/USDT"
         
         # تشخیص مقدار
         amount = "100"
-        amount_match = re.search(r'(\d+(?:\.\d+)?)\s*(USD|USDT|UNIT)?', search_upper)
+        amount_match = re.search(r'(\d+(?:\.\d+)?)', search_text)
         if amount_match:
             amount = amount_match.group(1)
+        
+        logger.info(f"🔍 نماد: {symbol}, مقدار: {amount}")
         
         # ارسال به Telegram
         message = f"""🎯 <b>سیگنال جدید از TradingView</b>
@@ -150,14 +146,14 @@ def process_tradingview_alert(email_body, subject, from_email):
         logger.error(f"❌ خطا در پردازش ایمیل TradingView: {e}")
 
 def email_checker_loop():
-    """حلقه چک کردن ایمیل هر 60 ثانیه"""
+    """حلقه چک کردن ایمیل هر 30 ثانیه"""
     logger.info("🔄 شروع حلقه بررسی ایمیل")
     while True:
         try:
             check_emails()
         except Exception as e:
             logger.error(f"خطا در چکر ایمیل: {e}")
-        time.sleep(60)
+        time.sleep(30)
 
 @app.route('/test-full', methods=['GET'])
 def test_full():
