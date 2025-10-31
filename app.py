@@ -19,7 +19,7 @@ EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 
 logger.info("🚀 APPLICATION STARTED - LOGGING WORKS!")
 logger.info(f"📧 Email: {EMAIL}")
-logger.info(f"🔑 Pass set: {'YES' if EMALE_PASSWORD else 'NO'}")
+logger.info(f"🔑 Pass set: {'YES' if EMAIL_PASSWORD else 'NO'}")  # ✅ اصلاح شد: EMAIL_PASSWORD
 
 def send_telegram_message(message):
     try:
