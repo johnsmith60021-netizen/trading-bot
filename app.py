@@ -7,17 +7,16 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger()
 
-@app.route('/test-simple')
-def test_simple():
+@app.route('/test-zoho')
+def test_zoho():
     try:
         email = os.getenv('EMAIL')
         password = os.getenv('EMAIL_PASSWORD')
-        imap_server = os.getenv('IMAP_SERVER', 'outlook.office365.com')
         
-        logger.info(f"🔧 Testing with: {email}, Server: {imap_server}")
+        logger.info(f"🔧 Testing Zoho with: {email}")
         
-        # تست اتصال
-        mail = imaplib.IMAP4_SSL(imap_server, 993)
+        # اتصال به Zoho - بدون نیاز به متغیرهای اضافه
+        mail = imaplib.IMAP4_SSL('imap.zoho.com', 993)
         mail.login(email, password)
         mail.select('inbox')
         
@@ -27,14 +26,14 @@ def test_simple():
         mail.close()
         mail.logout()
         
-        return f"✅ SUCCESS! Found {email_count} unread emails"
+        return f"✅ ZOHO SUCCESS! Found {email_count} unread emails"
         
     except Exception as e:
-        return f"❌ FAILED: {str(e)}"
+        return f"❌ ZOHO FAILED: {str(e)}"
 
 @app.route('/')
 def home():
-    return "سیستم فعال - از /test-simple استفاده کنید"
+    return "سیستم فعال - از /test-zoho استفاده کنید"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000))
