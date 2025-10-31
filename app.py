@@ -35,67 +35,69 @@ def send_telegram_message(message):
         return False
 
 def check_emails():
-    """چک کردن و پردازش ایمیل‌های جدید"""
+    """چک کردن و پردازش ایمیل‌های TradingView"""
     try:
-        logger.info("🔍 در حال بررسی ایمیل‌های جدید...")
+        logger.info("🔍 در حال بررسی پوشه‌های ایمیل...")
         
         mail = imaplib.IMAP4_SSL('imap.zoho.com', 993)
         mail.login(EMAIL, EMAIL_PASSWORD)
-        mail.select('inbox')
         
-        # جستجوی ایمیل‌های خوانده نشده
-        status, messages = mail.search(None, 'UNSEEN')
-        if status == 'OK':
-            email_ids = messages[0].split()
-            logger.info(f"📧 تعداد ایمیل‌های خوانده نشده: {len(email_ids)}")
-            
-            for email_id in email_ids:
-                status, msg_data = mail.fetch(email_id, '(RFC822)')
+        # لیست پوشه‌های مختلف برای بررسی
+        folders = ['INBOX', 'Notifications', 'notifications', 'NOTIFICATIONS']
+        
+        for folder in folders:
+            try:
+                logger.info(f"📁 بررسی پوشه: {folder}")
+                mail.select(folder)
+                
+                # جستجوی ALL ایمیل‌ها
+                status, messages = mail.search(None, 'ALL')
                 if status == 'OK':
-                    msg = email.message_from_bytes(msg_data[0][1])
-                    subject = msg['subject'] or "بدون موضوع"
-                    from_email = msg['from']
+                    email_ids = messages[0].split()
+                    logger.info(f"📧 تعداد ایمیل‌ها در {folder}: {len(email_ids)}")
                     
-                    logger.info(f"📩 ایمیل جدید از: {from_email}")
-                    logger.info(f"📝 موضوع: {subject}")
-                    
-                    # استخراج متن ایمیل
-                    body = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
-                                break
-                    else:
-                        body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
-                    
-                    logger.info(f"📄 محتوای ایمیل: {body[:500]}...")
-                    
-                    # پردازش ایمیل TradingView
-                    if "tradingview.com" in from_email.lower():
-                        logger.info("🎯 ایمیل TradingView پیدا شد! در حال پردازش...")
-                        process_tradingview_alert(body, subject, from_email)
-                    else:
-                        logger.info(f"⚠️ ایمیل از منبع دیگر: {from_email}")
+                    for email_id in email_ids:
+                        status, msg_data = mail.fetch(email_id, '(RFC822)')
+                        if status == 'OK':
+                            msg = email.message_from_bytes(msg_data[0][1])
+                            subject = msg['subject'] or "بدون موضوع"
+                            from_email = msg['from']
+                            
+                            if "tradingview.com" in from_email.lower():
+                                logger.info(f"🎯 ایمیل TradingView در {folder} پیدا شد!")
+                                logger.info(f"📝 موضوع: {subject}")
+                                
+                                # استخراج متن ایمیل
+                                body = ""
+                                if msg.is_multipart():
+                                    for part in msg.walk():
+                                        if part.get_content_type() == "text/plain":
+                                            body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                                            break
+                                else:
+                                    body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+                                
+                                logger.info(f"📄 محتوای ایمیل: {body[:300]}...")
+                                process_tradingview_alert(body, subject, from_email)
+                                return  # اولین ایمیل TradingView رو پردازش کن و برگرد
+                
+            except Exception as e:
+                logger.warning(f"⚠️ پوشه {folder} پیدا نشد: {e}")
+                continue
         
-        mail.close()
+        logger.info("❌ هیچ ایمیل TradingView در هیچ پوشه‌ای پیدا نشد")
         mail.logout()
         
     except Exception as e:
         logger.error(f"❌ خطا در بررسی ایمیل: {e}")
 
 def process_tradingview_alert(email_body, subject, from_email):
-    """پردازش آلرت TradingView - نسخه جدید"""
+    """پردازش آلرت TradingView"""
     try:
         logger.info("🎯 شروع پردازش سیگنال TradingView")
         
-        # ترکیب موضوع و بدنه برای جستجو
-        search_text = f"{subject} {email_body}"
-        
-        logger.info(f"🔍 متن کامل ایمیل: {search_text}")
-        
         # تشخیص نوع آلرت از موضوع
-        alert_type = "CROSSING"  # پیش‌فرض
+        alert_type = "CROSSING"
         if "CROSSING" in subject.upper():
             alert_type = "CROSSING"
         elif "ABOVE" in subject.upper():
@@ -117,7 +119,7 @@ def process_tradingview_alert(email_body, subject, from_email):
         if price_match:
             price = price_match.group(1)
         
-        # تعیین عمل معامله بر اساس نوع آلرت
+        # تعیین عمل معامله
         action = "ALERT"
         if alert_type in ["CROSSING", "ABOVE"]:
             action = "BUY"
@@ -147,14 +149,14 @@ def process_tradingview_alert(email_body, subject, from_email):
         logger.error(f"❌ خطا در پردازش ایمیل TradingView: {e}")
 
 def email_checker_loop():
-    """حلقه چک کردن ایمیل هر 30 ثانیه"""
+    """حلقه چک کردن ایمیل"""
     logger.info("🔄 شروع حلقه بررسی ایمیل")
     while True:
         try:
             check_emails()
         except Exception as e:
             logger.error(f"خطا در چکر ایمیل: {e}")
-        time.sleep(30)
+        time.sleep(60)
 
 @app.route('/test-full', methods=['GET'])
 def test_full():
