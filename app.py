@@ -85,60 +85,61 @@ def check_emails():
         logger.error(f"❌ خطا در بررسی ایمیل: {e}")
 
 def process_tradingview_alert(email_body, subject, from_email):
-    """پردازش آلرت TradingView"""
+    """پردازش آلرت TradingView - نسخه جدید"""
     try:
         logger.info("🎯 شروع پردازش سیگنال TradingView")
         
         # ترکیب موضوع و بدنه برای جستجو
         search_text = f"{subject} {email_body}"
-        search_upper = search_text.upper()
         
         logger.info(f"🔍 متن کامل ایمیل: {search_text}")
         
-        # تشخیص عمل معامله
-        action = "UNKNOWN"
-        if "BUY" in search_upper:
+        # تشخیص نوع آلرت از موضوع
+        alert_type = "CROSSING"  # پیش‌فرض
+        if "CROSSING" in subject.upper():
+            alert_type = "CROSSING"
+        elif "ABOVE" in subject.upper():
+            alert_type = "ABOVE" 
+        elif "BELOW" in subject.upper():
+            alert_type = "BELOW"
+        
+        # تشخیص نماد از موضوع
+        symbol = "UNKNOWN"
+        symbol_match = re.search(r'([A-Z]{2,10})(USDT|USDC|USD)', subject.upper())
+        if symbol_match:
+            base = symbol_match.group(1)
+            quote = symbol_match.group(2)
+            symbol = f"{base}/{quote}"
+        
+        # تشخیص قیمت از موضوع
+        price = "UNKNOWN"
+        price_match = re.search(r'([0-9]+\.?[0-9]*)', subject)
+        if price_match:
+            price = price_match.group(1)
+        
+        # تعیین عمل معامله بر اساس نوع آلرت
+        action = "ALERT"
+        if alert_type in ["CROSSING", "ABOVE"]:
             action = "BUY"
-        elif "SELL" in search_upper:
+        elif alert_type == "BELOW":
             action = "SELL"
         
-        logger.info(f"🔍 عمل تشخیص داده شده: {action}")
-        
-        if action == "UNKNOWN":
-            logger.warning("⚠️ عمل معامله تشخیص داده نشد")
-            return
-
-        # تشخیص نماد
-        symbol = "BTC/USDT"
-        if "XRP" in search_upper:
-            symbol = "XRP/USDT"
-        elif "BTC" in search_upper:
-            symbol = "BTC/USDT"
-        elif "ETH" in search_upper:
-            symbol = "ETH/USDT"
-        
-        # تشخیص مقدار
-        amount = "100"
-        amount_match = re.search(r'(\d+(?:\.\d+)?)', search_text)
-        if amount_match:
-            amount = amount_match.group(1)
-        
-        logger.info(f"🔍 نماد: {symbol}, مقدار: {amount}")
+        logger.info(f"🔍 تشخیص: {action} {symbol} @ {price}")
         
         # ارسال به Telegram
-        message = f"""🎯 <b>سیگنال جدید از TradingView</b>
+        message = f"""🎯 <b>هشدار جدید از TradingView</b>
 
 📈 <b>عمل:</b> {action}
 💎 <b>نماد:</b> {symbol}
-💰 <b>مقدار:</b> {amount}
+💰 <b>قیمت:</b> ${price}
+🚨 <b>نوع هشدار:</b> {alert_type}
 ✅ <b>منبع:</b> تأیید شده
 
-📧 <i>فرستنده: {from_email}</i>
 📋 <i>موضوع: {subject}</i>"""
         
         success = send_telegram_message(message)
         if success:
-            logger.info(f"✅ پیام با موفقیت به Telegram ارسال شد: {action} {symbol}")
+            logger.info(f"✅ پیام با موفقیت به Telegram ارسال شد: {action} {symbol} @ {price}")
         else:
             logger.error("❌ ارسال پیام به Telegram ناموفق بود")
         
