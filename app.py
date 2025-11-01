@@ -9,6 +9,7 @@ import re
 import logging
 from datetime import datetime
 import jdatetime  # برای تاریخ شمسی
+import pytz  # برای مدیریت تایم‌زون
 
 app = Flask(__name__)
 
@@ -22,10 +23,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 
 def get_persian_datetime():
-    """دریافت تاریخ و زمان شمسی"""
-    now = datetime.now()
-    persian_date = jdatetime.datetime.fromgregorian(datetime=now)
-    return persian_date.strftime('%Y/%m/%d %H:%M:%S')
+    """دریافت تاریخ و زمان شمسی با تایم‌زون تهران"""
+    try:
+        # تنظیم تایم‌زون تهران
+        tehran_tz = pytz.timezone('Asia/Tehran')
+        now_tehran = datetime.now(tehran_tz)
+        
+        # تبدیل به تاریخ شمسی
+        persian_date = jdatetime.datetime.fromgregorian(
+            datetime=now_tehran, 
+            locale='fa_IR'
+        )
+        return persian_date.strftime('%Y/%m/%d %H:%M:%S')
+    except Exception as e:
+        logger.error(f"خطا در دریافت تاریخ شمسی: {e}")
+        return "تاریخ نامعلوم"
 
 def send_telegram_message(message):
     """ارسال پیام به Telegram"""
@@ -117,44 +129,65 @@ def process_tradingview_alert(email_body, subject, from_email):
     try:
         logger.info(f"🎯 پردازش ایمیل: {subject}")
         
-        # تشخیص نماد
+        # تشخیص نماد - الگوی بهبود یافته
         symbol = "UNKNOWN"
-        symbol_match = re.search(r'([A-Z]{2,10})[/\-\s](USDT|USDC|USD)', subject.upper())
-        if symbol_match:
-            base = symbol_match.group(1)
-            quote = symbol_match.group(2)
-            symbol = f"{base}/{quote}"
         
-        # تشخیص قیمت کامل با اعشار
+        # الگوهای مختلف برای تشخیص نماد
+        symbol_patterns = [
+            r'([A-Z]{2,10})[/\-\s](USDT|USDC|USD|BUSD)',  # XRP/USDT, XRP-USDT, XRP USDT
+            r'(USDT|USDC|USD)[/\-\s]([A-Z]{2,10})',       # USDT/XRP
+            r'\b([A-Z]{2,10})\b.*\b(USDT|USDC|USD)\b',    # XRP USDT
+            r'Symbol:\s*([A-Z]{2,10})[/\-\s](USDT|USDC|USD)',  # Symbol: XRP/USDT
+            r'Pair:\s*([A-Z]{2,10})[/\-\s](USDT|USDC|USD)'     # Pair: XRP-USDT
+        ]
+        
+        for pattern in symbol_patterns:
+            symbol_match = re.search(pattern, subject.upper(), re.IGNORECASE)
+            if symbol_match:
+                base = symbol_match.group(1)
+                quote = symbol_match.group(2)
+                symbol = f"{base}/{quote}"
+                break
+        
+        # تشخیص قیمت کامل با اعشار - الگوی بهبود یافته
         price = "UNKNOWN"
-        # الگوی بهبود یافته برای تشخیص اعداد اعشاری کامل
-        price_match = re.search(r'(\d+\.\d+|\d+)', subject)
-        if price_match:
-            price = price_match.group(1)
+        price_patterns = [
+            r'(\d+\.\d{2,})',  # اعداد با حداقل ۲ رقم اعشار
+            r'(\d+\.\d+)',     # اعداد با اعشار
+            r'(\d+)'           # اعداد بدون اعشار
+        ]
+        
+        for pattern in price_patterns:
+            price_match = re.search(pattern, subject)
+            if price_match:
+                price = price_match.group(1)
+                break
         
         # تشخیص حجم معامله
         volume = "0"  # مقدار پیش‌فرض
-        volume_match = re.search(r'volume\s*:\s*(\d+\.?\d*)', email_body.lower())
-        if volume_match:
-            volume = volume_match.group(1)
-        else:
-            # جستجوی الگوهای دیگر برای حجم
-            volume_patterns = [
-                r'vol\s*:\s*(\d+\.?\d*)',
-                r'volume\s*=\s*(\d+\.?\d*)',
-                r'amount\s*:\s*(\d+\.?\d*)'
-            ]
-            for pattern in volume_patterns:
-                match = re.search(pattern, email_body.lower())
-                if match:
-                    volume = match.group(1)
-                    break
+        volume_patterns = [
+            r'volume\s*:\s*(\d+\.?\d*)',
+            r'vol\s*:\s*(\d+\.?\d*)',
+            r'volume\s*=\s*(\d+\.?\d*)',
+            r'amount\s*:\s*(\d+\.?\d*)',
+            r'size\s*:\s*(\d+\.?\d*)'
+        ]
+        
+        for pattern in volume_patterns:
+            match = re.search(pattern, email_body.lower())
+            if match:
+                volume = match.group(1)
+                break
         
         # تشخیص عمل معامله
         action = "ALERT"
-        if any(word in subject.upper() for word in ['CROSSING', 'ABOVE', 'CROSSED', 'BUY', 'LONG']):
+        buy_keywords = ['CROSSING', 'ABOVE', 'CROSSED', 'BUY', 'LONG', 'خرید', 'بالا']
+        sell_keywords = ['BELOW', 'SELL', 'SHORT', 'فروش', 'پایین']
+        
+        subject_upper = subject.upper()
+        if any(word in subject_upper for word in buy_keywords):
             action = "BUY"
-        elif any(word in subject.upper() for word in ['BELOW', 'SELL', 'SHORT']):
+        elif any(word in subject_upper for word in sell_keywords):
             action = "SELL"
         
         logger.info(f"🔍 تشخیص: {action} {symbol} @ {price} حجم: {volume}")
@@ -192,6 +225,34 @@ def email_checker_loop():
             logger.error(f"خطا در چکر ایمیل: {e}")
         time.sleep(30)
 
+def start_self_ping():
+    """پینگ داخلی برای جلوگیری از خواب سریع"""
+    def ping_loop():
+        while True:
+            try:
+                requests.get("https://trading-bot-v6c3.onrender.com/health", timeout=10)
+                logger.info("✅ پینگ داخلی ارسال شد")
+            except Exception as e:
+                logger.warning(f"⚠️ خطا در پینگ داخلی: {e}")
+            time.sleep(120)  # هر ۲ دقیقه
+    
+    ping_thread = threading.Thread(target=ping_loop, daemon=True)
+    ping_thread.start()
+
+@app.route('/health')
+def health_check():
+    """Endpoint ساده برای cron-job.org"""
+    return "OK", 200
+
+@app.route('/ping')
+def ping():
+    """Endpoint برای نمایش وضعیت سرور"""
+    return jsonify({
+        "status": "active",
+        "timestamp": get_persian_datetime(),
+        "service": "TradingView Bot"
+    }), 200
+
 @app.route('/test-full', methods=['GET'])
 def test_full():
     """تست کامل سیستم"""
@@ -201,7 +262,8 @@ def test_full():
         return jsonify({
             "status": "success", 
             "message": f"بررسی ایمیل انجام شد. {result} ایمیل جدید پردازش شد.",
-            "emails_processed": result
+            "emails_processed": result,
+            "timestamp": get_persian_datetime()
         })
     except Exception as e:
         logger.error(f"خطا در تست: {e}")
@@ -209,12 +271,20 @@ def test_full():
 
 @app.route('/')
 def home():
-    return "سیستم فعال است! ✅ از /test-full استفاده کنید"
+    return jsonify({
+        "status": "active",
+        "service": "TradingView Bot",
+        "timestamp": get_persian_datetime()
+    })
 
-# شروع چکر ایمیل
-logger.info("🚀 راه‌اندازی سیستم TradingView Bot - پوشه‌ها: Notification, INBOX")
+# شروع سرویس‌ها
+logger.info("🚀 راه‌اندازی سیستم TradingView Bot")
+logger.info("🔄 شروع سیستم پینگ خودکار")
+
+# شروع تمام threadها
 email_thread = threading.Thread(target=email_checker_loop, daemon=True)
 email_thread.start()
+start_self_ping()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000))
