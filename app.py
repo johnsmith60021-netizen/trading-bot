@@ -7,6 +7,8 @@ import time
 import threading
 import re
 import logging
+from datetime import datetime
+import jdatetime  # برای تاریخ شمسی
 
 app = Flask(__name__)
 
@@ -18,6 +20,12 @@ EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
+
+def get_persian_datetime():
+    """دریافت تاریخ و زمان شمسی"""
+    now = datetime.now()
+    persian_date = jdatetime.datetime.fromgregorian(datetime=now)
+    return persian_date.strftime('%Y/%m/%d %H:%M:%S')
 
 def send_telegram_message(message):
     """ارسال پیام به Telegram"""
@@ -80,53 +88,76 @@ def check_emails():
                                     body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
                                 
                                 # پردازش ایمیل
-                                if process_tradingview_alert(body, subject, from_email, folder):
+                                if process_tradingview_alert(body, subject, from_email):
                                     folder_processed += 1
-                                    # ایمیل رو به عنوان خوانده شده علامت بزن
-                                    mail.store(email_id, '+FLAGS', '\\Seen')
+                                    # حذف ایمیل پس از پردازش موفق
+                                    mail.store(email_id, '+FLAGS', '\\Deleted')
+                    
+                    # حذف دائمی ایمیل‌های علامت‌گذاری شده
+                    if folder_processed > 0:
+                        mail.expunge()
                     
                     total_processed += folder_processed
-                    logger.info(f"✅ {folder_processed} ایمیل از {folder} پردازش شد")
+                    logger.info(f"✅ {folder_processed} ایمیل از {folder} پردازش و حذف شد")
                 
             except Exception as e:
                 logger.warning(f"⚠️ مشکل در پوشه {folder}: {e}")
                 continue
         
         mail.logout()
-        logger.info(f"🎉 پردازش کامل. مجموعاً {total_processed} ایمیل جدید پردازش شد.")
+        logger.info(f"🎉 پردازش کامل. مجموعاً {total_processed} ایمیل جدید پردازش و حذف شد.")
         return total_processed
         
     except Exception as e:
         logger.error(f"❌ خطا در بررسی ایمیل: {e}")
         return 0
 
-def process_tradingview_alert(email_body, subject, from_email, folder):
+def process_tradingview_alert(email_body, subject, from_email):
     """پردازش آلرت TradingView"""
     try:
-        logger.info(f"🎯 پردازش ایمیل از پوشه {folder}: {subject}")
+        logger.info(f"🎯 پردازش ایمیل: {subject}")
         
         # تشخیص نماد
         symbol = "UNKNOWN"
-        symbol_match = re.search(r'([A-Z]{2,10})(USDT|USDC|USD)', subject.upper())
+        symbol_match = re.search(r'([A-Z]{2,10})[/\-\s](USDT|USDC|USD)', subject.upper())
         if symbol_match:
             base = symbol_match.group(1)
             quote = symbol_match.group(2)
             symbol = f"{base}/{quote}"
         
-        # تشخیص قیمت
+        # تشخیص قیمت کامل با اعشار
         price = "UNKNOWN"
-        price_match = re.search(r'(\d+\.?\d*)', subject)
+        # الگوی بهبود یافته برای تشخیص اعداد اعشاری کامل
+        price_match = re.search(r'(\d+\.\d+|\d+)', subject)
         if price_match:
             price = price_match.group(1)
         
+        # تشخیص حجم معامله
+        volume = "0"  # مقدار پیش‌فرض
+        volume_match = re.search(r'volume\s*:\s*(\d+\.?\d*)', email_body.lower())
+        if volume_match:
+            volume = volume_match.group(1)
+        else:
+            # جستجوی الگوهای دیگر برای حجم
+            volume_patterns = [
+                r'vol\s*:\s*(\d+\.?\d*)',
+                r'volume\s*=\s*(\d+\.?\d*)',
+                r'amount\s*:\s*(\d+\.?\d*)'
+            ]
+            for pattern in volume_patterns:
+                match = re.search(pattern, email_body.lower())
+                if match:
+                    volume = match.group(1)
+                    break
+        
         # تشخیص عمل معامله
         action = "ALERT"
-        if any(word in subject.upper() for word in ['CROSSING', 'ABOVE', 'CROSSED']):
+        if any(word in subject.upper() for word in ['CROSSING', 'ABOVE', 'CROSSED', 'BUY', 'LONG']):
             action = "BUY"
-        elif 'BELOW' in subject.upper():
+        elif any(word in subject.upper() for word in ['BELOW', 'SELL', 'SHORT']):
             action = "SELL"
         
-        logger.info(f"🔍 تشخیص: {action} {symbol} @ {price}")
+        logger.info(f"🔍 تشخیص: {action} {symbol} @ {price} حجم: {volume}")
         
         # ارسال به Telegram
         message = f"""🎯 <b>هشدار جدید از TradingView</b>
@@ -134,14 +165,14 @@ def process_tradingview_alert(email_body, subject, from_email, folder):
 📈 <b>عمل:</b> {action}
 💎 <b>نماد:</b> {symbol}
 💰 <b>قیمت:</b> ${price}
-📁 <b>پوشه:</b> {folder}
-✅ <b>وضعیت:</b> جدید
+📊 <b>حجم:</b> {volume}
+🕒 <b>زمان:</b> {get_persian_datetime()}
 
 📋 <i>موضوع: {subject}</i>"""
         
         success = send_telegram_message(message)
         if success:
-            logger.info(f"✅ پیام ارسال شد: {action} {symbol} @ {price} از {folder}")
+            logger.info(f"✅ پیام ارسال شد: {action} {symbol} @ {price} حجم: {volume}")
             return True
         else:
             logger.error("❌ ارسال پیام ناموفق بود")
