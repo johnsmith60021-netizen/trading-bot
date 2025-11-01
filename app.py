@@ -42,64 +42,68 @@ def check_emails():
         mail = imaplib.IMAP4_SSL('imap.zoho.com', 993)
         mail.login(EMAIL, EMAIL_PASSWORD)
         
-        # پوشه صحیح: Notification (بدون s)
-        target_folder = 'Notification'
+        # بررسی هر دو پوشه
+        folders = ['Notification', 'INBOX']
+        total_processed = 0
         
-        try:
-            logger.info(f"📁 بررسی پوشه: {target_folder}")
-            mail.select(target_folder)
-            
-            # جستجوی ایمیل‌های خوانده نشده
-            status, messages = mail.search(None, 'UNSEEN')
-            
-            if status == 'OK':
-                email_ids = messages[0].split()
-                logger.info(f"📧 تعداد ایمیل‌های ناخوانده در {target_folder}: {len(email_ids)}")
+        for folder in folders:
+            try:
+                logger.info(f"📁 بررسی پوشه: {folder}")
+                mail.select(folder)
                 
-                for email_id in email_ids:
-                    status, msg_data = mail.fetch(email_id, '(RFC822)')
-                    if status == 'OK':
-                        msg = email.message_from_bytes(msg_data[0][1])
-                        subject = msg['subject'] or "بدون موضوع"
-                        from_email = msg['from']
-                        
-                        if "tradingview.com" in from_email.lower():
-                            logger.info(f"🎯 ایمیل TradingView پیدا شد: {subject}")
-                            
-                            # استخراج متن ایمیل
-                            body = ""
-                            if msg.is_multipart():
-                                for part in msg.walk():
-                                    if part.get_content_type() == "text/plain":
-                                        body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
-                                        break
-                            else:
-                                body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
-                            
-                            # پردازش ایمیل
-                            process_tradingview_alert(body, subject, from_email)
-                            
-                            # ایمیل رو به عنوان خوانده شده علامت بزن
-                            mail.store(email_id, '+FLAGS', '\\Seen')
+                # جستجوی ایمیل‌های خوانده نشده
+                status, messages = mail.search(None, 'UNSEEN')
                 
-            else:
-                logger.error("❌ خطا در جستجوی ایمیل‌های ناخوانده")
+                if status == 'OK':
+                    email_ids = messages[0].split()
+                    logger.info(f"📧 تعداد ایمیل‌های ناخوانده در {folder}: {len(email_ids)}")
+                    
+                    folder_processed = 0
+                    for email_id in email_ids:
+                        status, msg_data = mail.fetch(email_id, '(RFC822)')
+                        if status == 'OK':
+                            msg = email.message_from_bytes(msg_data[0][1])
+                            subject = msg['subject'] or "بدون موضوع"
+                            from_email = msg['from']
+                            
+                            if "tradingview.com" in from_email.lower():
+                                logger.info(f"🎯 ایمیل TradingView پیدا شد: {subject}")
+                                
+                                # استخراج متن ایمیل
+                                body = ""
+                                if msg.is_multipart():
+                                    for part in msg.walk():
+                                        if part.get_content_type() == "text/plain":
+                                            body = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                                            break
+                                else:
+                                    body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
+                                
+                                # پردازش ایمیل
+                                if process_tradingview_alert(body, subject, from_email, folder):
+                                    folder_processed += 1
+                                    # ایمیل رو به عنوان خوانده شده علامت بزن
+                                    mail.store(email_id, '+FLAGS', '\\Seen')
+                    
+                    total_processed += folder_processed
+                    logger.info(f"✅ {folder_processed} ایمیل از {folder} پردازش شد")
                 
-        except Exception as e:
-            logger.error(f"❌ مشکل در پوشه {target_folder}: {e}")
-            return 0
+            except Exception as e:
+                logger.warning(f"⚠️ مشکل در پوشه {folder}: {e}")
+                continue
         
         mail.logout()
-        return len(email_ids) if status == 'OK' else 0
+        logger.info(f"🎉 پردازش کامل. مجموعاً {total_processed} ایمیل جدید پردازش شد.")
+        return total_processed
         
     except Exception as e:
         logger.error(f"❌ خطا در بررسی ایمیل: {e}")
         return 0
 
-def process_tradingview_alert(email_body, subject, from_email):
+def process_tradingview_alert(email_body, subject, from_email, folder):
     """پردازش آلرت TradingView"""
     try:
-        logger.info(f"🎯 پردازش ایمیل جدید: {subject}")
+        logger.info(f"🎯 پردازش ایمیل از پوشه {folder}: {subject}")
         
         # تشخیص نماد
         symbol = "UNKNOWN"
@@ -115,7 +119,7 @@ def process_tradingview_alert(email_body, subject, from_email):
         if price_match:
             price = price_match.group(1)
         
-        # تشخیص عمل معامله بر اساس نوع آلرت
+        # تشخیص عمل معامله
         action = "ALERT"
         if any(word in subject.upper() for word in ['CROSSING', 'ABOVE', 'CROSSED']):
             action = "BUY"
@@ -130,13 +134,14 @@ def process_tradingview_alert(email_body, subject, from_email):
 📈 <b>عمل:</b> {action}
 💎 <b>نماد:</b> {symbol}
 💰 <b>قیمت:</b> ${price}
+📁 <b>پوشه:</b> {folder}
 ✅ <b>وضعیت:</b> جدید
 
 📋 <i>موضوع: {subject}</i>"""
         
         success = send_telegram_message(message)
         if success:
-            logger.info(f"✅ پیام جدید ارسال شد: {action} {symbol} @ {price}")
+            logger.info(f"✅ پیام ارسال شد: {action} {symbol} @ {price} از {folder}")
             return True
         else:
             logger.error("❌ ارسال پیام ناموفق بود")
@@ -154,7 +159,7 @@ def email_checker_loop():
             check_emails()
         except Exception as e:
             logger.error(f"خطا در چکر ایمیل: {e}")
-        time.sleep(30)  # هر 30 ثانیه چک کن
+        time.sleep(30)
 
 @app.route('/test-full', methods=['GET'])
 def test_full():
@@ -176,7 +181,7 @@ def home():
     return "سیستم فعال است! ✅ از /test-full استفاده کنید"
 
 # شروع چکر ایمیل
-logger.info("🚀 راه‌اندازی سیستم TradingView Bot - پوشه: Notification")
+logger.info("🚀 راه‌اندازی سیستم TradingView Bot - پوشه‌ها: Notification, INBOX")
 email_thread = threading.Thread(target=email_checker_loop, daemon=True)
 email_thread.start()
 
