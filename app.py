@@ -129,54 +129,101 @@ def process_tradingview_alert(email_body, subject, from_email):
     try:
         logger.info(f"🎯 پردازش ایمیل: {subject}")
         
-        # تشخیص نماد - الگوی بهبود یافته
+        # تشخیص نماد - الگوی بهبود یافته و دقیق
         symbol = "UNKNOWN"
         
-        # الگوهای مختلف برای تشخیص نماد
+        # الگوهای دقیق‌تر برای تشخیص نماد
         symbol_patterns = [
-            r'([A-Z]{2,10})[/\-\s](USDT|USDC|USD|BUSD)',  # XRP/USDT, XRP-USDT, XRP USDT
-            r'(USDT|USDC|USD)[/\-\s]([A-Z]{2,10})',       # USDT/XRP
-            r'\b([A-Z]{2,10})\b.*\b(USDT|USDC|USD)\b',    # XRP USDT
-            r'Symbol:\s*([A-Z]{2,10})[/\-\s](USDT|USDC|USD)',  # Symbol: XRP/USDT
-            r'Pair:\s*([A-Z]{2,10})[/\-\s](USDT|USDC|USD)'     # Pair: XRP-USDT
+            # الگوی اصلی: BASE/QUOTE
+            r'([A-Z]{2,10})[/](USDT|USDC|USD|BUSD)',
+            # الگوی با خط فاصله
+            r'([A-Z]{2,10})[-](USDT|USDC|USD|BUSD)',
+            # الگوی با فضای خالی
+            r'([A-Z]{2,10})\s+(USDT|USDC|USD|BUSD)',
+            # الگوی معکوس: QUOTE/BASE
+            r'(USDT|USDC|USD|BUSD)[/]([A-Z]{2,10})',
+            # جستجو در کل متن برای نماد
+            r'\b([A-Z]{2,10})(USDT|USDC|USD|BUSD)\b'
         ]
         
-        for pattern in symbol_patterns:
-            symbol_match = re.search(pattern, subject.upper(), re.IGNORECASE)
+        for i, pattern in enumerate(symbol_patterns):
+            symbol_match = re.search(pattern, subject.upper().replace(' ', ''))
             if symbol_match:
-                base = symbol_match.group(1)
-                quote = symbol_match.group(2)
-                symbol = f"{base}/{quote}"
+                logger.info(f"الگوی {i+1} matched: {symbol_match.groups()}")
+                
+                if i < 3:  # الگوهای BASE/QUOTE
+                    base = symbol_match.group(1)
+                    quote = symbol_match.group(2)
+                    symbol = f"{base}/{quote}"
+                elif i == 3:  # الگوی معکوس
+                    quote = symbol_match.group(1)
+                    base = symbol_match.group(2)
+                    symbol = f"{base}/{quote}"
+                else:  # الگوی یکپارچه
+                    base = symbol_match.group(1)
+                    quote = symbol_match.group(2)
+                    symbol = f"{base}/{quote}"
+                
+                logger.info(f"✅ نماد تشخیص داده شد: {symbol}")
                 break
         
-        # تشخیص قیمت کامل با اعشار - الگوی بهبود یافته
+        # اگر نماد تشخیص داده نشد، سعی کن از body ایمیل استخراج کن
+        if symbol == "UNKNOWN":
+            for pattern in symbol_patterns:
+                symbol_match = re.search(pattern, email_body.upper().replace(' ', ''))
+                if symbol_match:
+                    # پردازش مشابه بالا
+                    if pattern == symbol_patterns[3]:  # الگوی معکوس
+                        quote = symbol_match.group(1)
+                        base = symbol_match.group(2)
+                        symbol = f"{base}/{quote}"
+                    else:
+                        base = symbol_match.group(1)
+                        quote = symbol_match.group(2)
+                        symbol = f"{base}/{quote}"
+                    logger.info(f"✅ نماد از body تشخیص داده شد: {symbol}")
+                    break
+        
+        # تشخیص قیمت کامل با اعشار
         price = "UNKNOWN"
         price_patterns = [
-            r'(\d+\.\d{2,})',  # اعداد با حداقل ۲ رقم اعشار
-            r'(\d+\.\d+)',     # اعداد با اعشار
-            r'(\d+)'           # اعداد بدون اعشار
+            r'[$]?(\d+\.\d{4,})',  # قیمت‌های با ۴ رقم اعشار یا بیشتر
+            r'[$]?(\d+\.\d{2,})',  # قیمت‌های با ۲-۳ رقم اعشار
+            r'[$]?(\d+\.\d+)',     # قیمت‌های با اعشار
+            r'[$]?(\d+)'           # قیمت‌های بدون اعشار
         ]
         
         for pattern in price_patterns:
             price_match = re.search(pattern, subject)
             if price_match:
                 price = price_match.group(1)
+                logger.info(f"✅ قیمت تشخیص داده شد: {price}")
                 break
         
+        # اگر قیمت از subject پیدا نشد، از body جستجو کن
+        if price == "UNKNOWN":
+            for pattern in price_patterns:
+                price_match = re.search(pattern, email_body)
+                if price_match:
+                    price = price_match.group(1)
+                    logger.info(f"✅ قیمت از body تشخیص داده شد: {price}")
+                    break
+        
         # تشخیص حجم معامله
-        volume = "0"  # مقدار پیش‌فرض
+        volume = "0"
         volume_patterns = [
-            r'volume\s*:\s*(\d+\.?\d*)',
-            r'vol\s*:\s*(\d+\.?\d*)',
-            r'volume\s*=\s*(\d+\.?\d*)',
-            r'amount\s*:\s*(\d+\.?\d*)',
-            r'size\s*:\s*(\d+\.?\d*)'
+            r'volume\s*[:=]\s*(\d+\.?\d*)',
+            r'vol\s*[:=]\s*(\d+\.?\d*)',
+            r'amount\s*[:=]\s*(\d+\.?\d*)',
+            r'size\s*[:=]\s*(\d+\.?\d*)',
+            r'quantity\s*[:=]\s*(\d+\.?\d*)'
         ]
         
         for pattern in volume_patterns:
             match = re.search(pattern, email_body.lower())
             if match:
                 volume = match.group(1)
+                logger.info(f"✅ حجم تشخیص داده شد: {volume}")
                 break
         
         # تشخیص عمل معامله
@@ -190,7 +237,7 @@ def process_tradingview_alert(email_body, subject, from_email):
         elif any(word in subject_upper for word in sell_keywords):
             action = "SELL"
         
-        logger.info(f"🔍 تشخیص: {action} {symbol} @ {price} حجم: {volume}")
+        logger.info(f"🔍 تشخیص نهایی: {action} {symbol} @ {price} حجم: {volume}")
         
         # ارسال به Telegram
         message = f"""🎯 <b>هشدار جدید از TradingView</b>
