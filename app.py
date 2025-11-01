@@ -9,6 +9,7 @@ import re
 import logging
 from datetime import datetime
 import jdatetime  # برای تاریخ شمسی
+import pytz  # برای مدیریت تایم‌زون
 
 app = Flask(__name__)
 
@@ -22,20 +23,28 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def get_persian_datetime():
-    """دریافت تاریخ و زمان شمسی"""
+    """دریافت تاریخ و زمان شمسی با تایم‌زون تهران"""
     try:
-        # استفاده از timezone محلی سرور
-        now = datetime.now()
+        # روش مطمئن‌تر: استفاده از UTC و اضافه کردن افست تهران
+        utc_now = datetime.utcnow()
+        
+        # تهران UTC+3:30 هست
+        tehran_offset = 3.5 * 60 * 60  # 3.5 ساعت به ثانیه
+        
+        # اضافه کردن افست تهران به UTC
+        tehran_time = utc_now.timestamp() + tehran_offset
+        now_tehran = datetime.fromtimestamp(tehran_time)
         
         # تبدیل به تاریخ شمسی
         persian_date = jdatetime.datetime.fromgregorian(
-            datetime=now, 
+            datetime=now_tehran, 
             locale='fa_IR'
         )
         return persian_date.strftime('%Y/%m/%d %H:%M:%S')
     except Exception as e:
         logger.error(f"خطا در دریافت تاریخ شمسی: {e}")
-        return "تاریخ نامعلوم"
+        # فال‌بک: زمان سرور
+        return datetime.now().strftime('%Y/%m/%d %H:%M:%S')
 
 def send_telegram_message(message):
     """ارسال پیام به Telegram"""
